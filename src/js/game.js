@@ -15,6 +15,7 @@ const GHOST_SPEED = 0.1;         // 1/10 celda/frame (ambusher, flanker, shy)
 const GHOST_SPEED_CHASER = 0.125; // 1/8 celda/frame: el chaser, igual que Pac-Man
 const ENERGY_SCORE = 50;         // pts por bola de poder
 const FRIGHT_TIME = 360;         // 6 s de asustado (frame-based: 360 @ 60 fps)
+const FLICKER_TIME = 120;        // parpadeo de aviso en los ultimos 2 s
 const FRIGHT_SPEED = 0.05;       // mitad del 0.1 base mientras estan asustados
 
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer

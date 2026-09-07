@@ -101,13 +101,23 @@ function drawPacman( ctx, p, frame ) {
   ctx.fill();
 }
 
-function drawGhost( ctx, g, color ) {
+function drawGhost( ctx, g, color, frame, frightTimer ) {
   const { cx, cy } = cellCenter( g.x, g.y );
   const r = TILE / 2 - 1;
   const top = cy - r;
   const bottom = cy + r;
   const left = cx - r;
   const right = cx + r;
+
+  // Parpadeo de aviso: en los ultimos ~2 s del asustado (FLICKER_TIME) el
+  // cuerpo alterna blanco/azul cada ~6 frames antes de volver a la normalidad.
+  if (
+    g.mode === 'frightened' &&
+    frightTimer <= FLICKER_TIME &&
+    Math.floor( frame / 6 ) % 2 === 0
+  ) {
+    color = '#fff';
+  }
 
   ctx.fillStyle = color;
   ctx.beginPath();
@@ -168,7 +178,7 @@ function draw( ctx, game, frame ) {
   drawPacman( ctx, game.pacman, frame );
   game.ghosts.forEach( ( g ) => {
     const color = g.mode === 'frightened' ? '#2121ff' : GHOST_COLOR[ g.kind ] || '#ff0000';
-    drawGhost( ctx, g, color );
+    drawGhost( ctx, g, color, frame, game.frightTimer );
   } );
   drawHUD( ctx, game, W );
 }
