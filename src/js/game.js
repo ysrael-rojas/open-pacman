@@ -17,6 +17,9 @@ const ENERGY_SCORE = 50;         // pts por bola de poder
 const FRIGHT_TIME = 360;         // 6 s de asustado (frame-based: 360 @ 60 fps)
 const FLICKER_TIME = 120;        // parpadeo de aviso en los ultimos 2 s
 const FRIGHT_SPEED = 0.05;       // mitad del 0.1 base mientras estan asustados
+const GHOST_EAT_BASE = 200;      // pts del 1er fantasma comido tras una bola
+const EYES_SPEED = 0.2;          // el doble del 0.1 base (ojos clasicos)
+const REVIVE_DELAY = 60;         // espera de 1 s dentro de la pen al regenerar
 
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
@@ -141,9 +144,10 @@ function insidePen( x, y ) {
 
 // La puerta bloquea a quien no esta liberado o ya esta fuera de la pen: un
 // no-liberado patrulla dentro sin salir; un liberado de fuera no reentra.
-// Solo el liberado que sigue dentro la cruza, hacia fuera.
+// Solo el liberado que sigue dentro la cruza, hacia fuera, y los ojos, que la
+// cruzan hacia dentro como unica excepcion a esa regla de un solo sentido.
 function blocksDoor( g ) {
-  return !g.released || !insidePen( g.x, g.y );
+  return g.mode !== 'eyes' && ( !g.released || !insidePen( g.x, g.y ) );
 }
 
 // Empieza un asustado: resetea el temporizador y la secuencia de puntos y
@@ -196,9 +200,13 @@ function decideGhost( game, g ) {
   // target != null -> persigue ese punto; target == null -> vaga al azar.
   let target = null;
 
-  // Asustado: deambula al azar, sin estrategia de kind (igual que un
-  // no-liberado dentro de la pen).
-  if ( g.mode === 'frightened' ) {
+  // Ojos: objetivo fijo = la celda de origen de este fantasma en GHOST_STARTS.
+  if ( g.mode === 'eyes' ) {
+    const home = GHOST_STARTS[ game.ghosts.indexOf( g ) ];
+    target = { x: home.x, y: home.y };
+  } else if ( g.mode === 'frightened' ) {
+    // Asustado: deambula al azar, sin estrategia de kind (igual que un
+    // no-liberado dentro de la pen).
     target = null;
   } else if ( g.released ) {
     if ( insidePen( g.x, g.y ) ) {
@@ -255,6 +263,15 @@ function moveGhost( game, g ) {
   if ( aligned( g.x ) && aligned( g.y ) ) {
     g.x = Math.round( g.x );
     g.y = Math.round( g.y );
+    // Ojos que llegan a su celda de origen: se regeneran como fantasma normal
+    // (esperan REVIVE_DELAY y salen despues por la mecanica de SPEC 01/02).
+    const home = GHOST_STARTS[ game.ghosts.indexOf( g ) ];
+    if ( g.mode === 'eyes' && home.x === g.x && home.y === g.y ) {
+      g.mode = 'normal';
+      g.released = false;
+      g.waitFrames = REVIVE_DELAY;
+      g.speed = g.kind === 'chaser' ? GHOST_SPEED_CHASER : GHOST_SPEED;
+    }
     decideGhost( game, g );
     if ( !canMove( grid, g.x, g.y, g.dir, 'ghost', blocksDoor( g ) ) ) return;
   }
@@ -275,9 +292,13 @@ function resetPositions( game ) {
     g.x = GHOST_STARTS[ i ].x;
     g.y = GHOST_STARTS[ i ].y;
     g.dir = 'up';
+    g.mode = 'normal';
+    g.speed = g.kind === 'chaser' ? GHOST_SPEED_CHASER : GHOST_SPEED;
     g.released = GHOST_STARTS[ i ].releaseDelay === 0;
     g.waitFrames = Math.round( GHOST_STARTS[ i ].releaseDelay * 60 );
   } );
+  game.frightTimer = 0;
+  game.ghostChain = 0;
 }
 
 function collides( a, b ) {
@@ -299,6 +320,32 @@ function update( game ) {
     } );
   }
 
+  // Colision por modo. Se evalua antes de decrementar frightTimer: un fantasma
+  // asustado se come aunque el asustado termine en este mismo frame.
+  for ( const g of game.ghosts ) {
+    if ( !collides( game.pacman, g ) ) continue;
+    if ( g.mode === 'eyes' ) {
+      // Los ojos no restan vida ni se comen: Pac-Man atraviesa.
+      continue;
+    }
+    if ( g.mode === 'frightened' ) {
+      // Comer fantasma azul: 200 * 2^n segun los comidos desde la bola.
+      game.score += GHOST_EAT_BASE * 2 ** game.ghostChain;
+      game.ghostChain++;
+      g.mode = 'eyes';
+      g.speed = EYES_SPEED;
+      continue;
+    }
+    // Fantasma normal: perder una vida y reiniciar la partida en curso.
+    game.lives--;
+    if ( game.lives <= 0 ) {
+      game.state = 'lost';
+      return;
+    }
+    resetPositions( game );
+    break;
+  }
+
   // Cuenta atras del asustado; al agotarse, los azules recuperan su velocidad
   // de kind y vuelven a perseguir.
   if ( game.frightTimer > 0 ) {
@@ -310,18 +357,6 @@ function update( game ) {
           g.speed = g.kind === 'chaser' ? GHOST_SPEED_CHASER : GHOST_SPEED;
         }
       } );
-    }
-  }
-
-  for ( const g of game.ghosts ) {
-    if ( collides( game.pacman, g ) ) {
-      game.lives--;
-      if ( game.lives <= 0 ) {
-        game.state = 'lost';
-        return;
-      }
-      resetPositions( game );
-      break;
     }
   }
 

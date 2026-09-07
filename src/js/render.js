@@ -103,6 +103,26 @@ function drawPacman( ctx, p, frame ) {
 
 function drawGhost( ctx, g, color, frame, frightTimer ) {
   const { cx, cy } = cellCenter( g.x, g.y );
+
+  // Modo ojos: sin cuerpo, solo los dos ojos blancos con las pupilas mirando
+  // a la direccion de viaje.
+  if ( g.mode === 'eyes' ) {
+    const dir = DIRS[ g.dir ] || { x: 0, y: 0 };
+    const ex = dir.x * 1.6;
+    const ey = dir.y * 1.6;
+    for ( const off of [ -3.5, 3.5 ] ) {
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc( cx + off, cy, 3, 0, Math.PI * 2 );
+      ctx.fill();
+      ctx.fillStyle = '#2121ff';
+      ctx.beginPath();
+      ctx.arc( cx + off + ex, cy + ey, 1.5, 0, Math.PI * 2 );
+      ctx.fill();
+    }
+    return;
+  }
+
   const r = TILE / 2 - 1;
   const top = cy - r;
   const bottom = cy + r;
