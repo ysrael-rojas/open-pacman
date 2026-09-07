@@ -14,6 +14,8 @@ const PACMAN_SPEED = 0.125;      // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;         // 1/10 celda/frame (ambusher, flanker, shy)
 const GHOST_SPEED_CHASER = 0.125; // 1/8 celda/frame: el chaser, igual que Pac-Man
 const ENERGY_SCORE = 50;         // pts por bola de poder
+const FRIGHT_TIME = 360;         // 6 s de asustado (frame-based: 360 @ 60 fps)
+const FRIGHT_SPEED = 0.05;       // mitad del 0.1 base mientras estan asustados
 
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
@@ -30,6 +32,8 @@ function createGame() {
     score: 0,
     lives: 3,
     dotsRemaining: dots,
+    frightTimer: 0,   // frames restantes de asustado; 0 = inactivo
+    ghostChain: 0,    // fantasmas comidos desde la ultima bola
     grid,
     pacman: {
       x: PACMAN_START.x,
@@ -43,6 +47,7 @@ function createGame() {
       y: g.y,
       dir: 'up',
       kind: g.kind,
+      mode: 'normal', // 'normal' | 'frightened' | 'eyes'
       speed: g.kind === 'chaser' ? GHOST_SPEED_CHASER : GHOST_SPEED,
       released: g.releaseDelay === 0,
       waitFrames: Math.round( g.releaseDelay * 60 ), // 60 frames = 1 s
@@ -111,6 +116,7 @@ function movePacman( game ) {
       grid[ p.y ][ p.x ] = 0;
       game.score += ENERGY_SCORE;
       game.dotsRemaining--;
+      activateFrighten( game );
     }
     // Si no puede seguir, se detiene en la celda.
     if ( !canMove( grid, p.x, p.y, p.dir, 'pacman' ) ) return;
@@ -137,6 +143,21 @@ function insidePen( x, y ) {
 // Solo el liberado que sigue dentro la cruza, hacia fuera.
 function blocksDoor( g ) {
   return !g.released || !insidePen( g.x, g.y );
+}
+
+// Empieza un asustado: resetea el temporizador y la secuencia de puntos y
+// asusta a los fantasmas liberados que estan fuera de la pen (invierten y se
+// vuelven azules). Los que esperan dentro no se ven afectados.
+function activateFrighten( game ) {
+  game.frightTimer = FRIGHT_TIME;
+  game.ghostChain = 0;
+  game.ghosts.forEach( ( g ) => {
+    if ( g.mode === 'normal' && g.released && !insidePen( g.x, g.y ) ) {
+      g.dir = OPPOSITE[ g.dir ];
+      g.mode = 'frightened';
+      g.speed = FRIGHT_SPEED;
+    }
+  } );
 }
 
 // Devuelve la direccion de `choices` que minimiza la distancia Manhattan
@@ -174,10 +195,11 @@ function decideGhost( game, g ) {
   // target != null -> persigue ese punto; target == null -> vaga al azar.
   let target = null;
 
-  // La estrategia del kind solo aplica una vez liberado y fuera de la pen.
-  // Mientras no esta liberado, target queda null: deambula al azar entre los
-  // vecinos validos del interior de la pen (la puerta le bloquea, doorBlocks).
-  if ( g.released ) {
+  // Asustado: deambula al azar, sin estrategia de kind (igual que un
+  // no-liberado dentro de la pen).
+  if ( g.mode === 'frightened' ) {
+    target = null;
+  } else if ( g.released ) {
     if ( insidePen( g.x, g.y ) ) {
       // Salida de la pen: mientras esta liberado pero aun dentro, apunta a la
       // puerta mas cercana (fila 12) en vez de a su objetivo de estrategia.
@@ -264,6 +286,31 @@ function collides( a, b ) {
 function update( game ) {
   movePacman( game );
   game.ghosts.forEach( ( g ) => moveGhost( game, g ) );
+
+  // Mientras el asustado siga activo, un fantasma normal que sale de la pen se
+  // incorpora azul (sin invertir direccion, a diferencia de activateFrighten).
+  if ( game.frightTimer > 0 ) {
+    game.ghosts.forEach( ( g ) => {
+      if ( g.mode === 'normal' && g.released && !insidePen( g.x, g.y ) ) {
+        g.mode = 'frightened';
+        g.speed = FRIGHT_SPEED;
+      }
+    } );
+  }
+
+  // Cuenta atras del asustado; al agotarse, los azules recuperan su velocidad
+  // de kind y vuelven a perseguir.
+  if ( game.frightTimer > 0 ) {
+    game.frightTimer--;
+    if ( game.frightTimer === 0 ) {
+      game.ghosts.forEach( ( g ) => {
+        if ( g.mode === 'frightened' ) {
+          g.mode = 'normal';
+          g.speed = g.kind === 'chaser' ? GHOST_SPEED_CHASER : GHOST_SPEED;
+        }
+      } );
+    }
+  }
 
   for ( const g of game.ghosts ) {
     if ( collides( game.pacman, g ) ) {
