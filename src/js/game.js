@@ -43,6 +43,8 @@ function createGame() {
       dir: 'up',
       kind: g.kind,
       speed: g.kind === 'chaser' ? GHOST_SPEED_CHASER : GHOST_SPEED,
+      released: g.releaseDelay === 0,
+      waitFrames: Math.round( g.releaseDelay * 60 ), // 60 frames = 1 s
     } ) ),
   };
 }
@@ -54,24 +56,26 @@ function aligned( v ) {
 // Una celda es muro para el actor dado?
 //   pacman: bloqueado por pared (1) y puerta (3)
 //   ghost:  bloqueado solo por pared (1)
-function isWall( grid, x, y, actor ) {
+//   ghost con doorBlocks (no liberado): la puerta (3) tambien bloquea, para
+//   que rebote dentro de la pen mientras espera su turno de salida.
+function isWall( grid, x, y, actor, doorBlocks ) {
   if ( y < 0 || y >= grid.length ) return true;
   if ( x < 0 || x >= grid[ 0 ].length ) return true;
   const v = grid[ y ][ x ];
   if ( v === 1 ) return true;
-  if ( v === 3 && actor === 'pacman' ) return true;
+  if ( v === 3 && ( actor === 'pacman' || doorBlocks ) ) return true;
   return false;
 }
 
 // Puede el actor avanzar desde (x,y) en la direccion dir?
-function canMove( grid, x, y, dir, actor ) {
+function canMove( grid, x, y, dir, actor, doorBlocks ) {
   const d = DIRS[ dir ];
   if ( !d ) return false;
   const tx = x + d.x;
   const ty = y + d.y;
   // Tunel: salir por un borde en la fila del tunel siempre es valido.
   if ( ty === TUNNEL_ROW && ( tx < 0 || tx >= grid[ 0 ].length ) ) return true;
-  return !isWall( grid, tx, ty, actor );
+  return !isWall( grid, tx, ty, actor, doorBlocks );
 }
 
 function wrapTunnel( a, width ) {
@@ -111,6 +115,16 @@ function movePacman( game ) {
   wrapTunnel( p, width );
 }
 
+// Pen (casa de los fantasmas): celdas interiores donde esperan su salida.
+// La puerta (tile 3) esta en la fila 12, cols 13-14.
+const PEN = { x0: 11, x1: 16, y0: 13, y1: 15 };
+const DOOR_ROW = 12;
+const DOOR_COLS = [ 13, 14 ];
+
+function insidePen( x, y ) {
+  return x >= PEN.x0 && x <= PEN.x1 && y >= PEN.y0 && y <= PEN.y1;
+}
+
 // Devuelve la direccion de `choices` que minimiza la distancia Manhattan
 // desde la celda actual del fantasma hasta el punto objetivo (tx, ty).
 function pickToward( choices, g, tx, ty ) {
@@ -136,7 +150,9 @@ function decideGhost( game, g ) {
   const py = Math.round( p.y );
 
   const options = Object.keys( DIRS ).filter(
-    ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
+    ( dir ) =>
+      dir !== OPPOSITE[ g.dir ] &&
+      canMove( grid, g.x, g.y, dir, 'ghost', !g.released )
   );
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ OPPOSITE[ g.dir ] ];
@@ -144,7 +160,11 @@ function decideGhost( game, g ) {
   // target != null -> persigue ese punto; target == null -> vaga al azar.
   let target = null;
 
-  if ( g.kind === 'chaser' ) {
+  if ( g.released && insidePen( g.x, g.y ) ) {
+    // Salida de la pen: mientras esta liberado pero aun dentro, apunta a la
+    // puerta mas cercana (fila 12) en vez de a su objetivo de estrategia.
+    target = { x: g.x <= DOOR_COLS[ 0 ] ? DOOR_COLS[ 0 ] : DOOR_COLS[ 1 ], y: DOOR_ROW };
+  } else if ( g.kind === 'chaser' ) {
     // Agresivo: siempre hacia la celda de Pac-Man.
     target = { x: px, y: py };
   } else if ( g.kind === 'ambusher' ) {
@@ -184,6 +204,12 @@ function moveGhost( game, g ) {
   const grid = game.grid;
   const width = grid[ 0 ].length;
 
+  // Cuenta atras de la salida escalonada: 1 frame = 1/60 s.
+  if ( !g.released ) {
+    g.waitFrames--;
+    if ( g.waitFrames <= 0 ) g.released = true;
+  }
+
   if ( aligned( g.x ) && aligned( g.y ) ) {
     g.x = Math.round( g.x );
     g.y = Math.round( g.y );
@@ -207,6 +233,8 @@ function resetPositions( game ) {
     g.x = GHOST_STARTS[ i ].x;
     g.y = GHOST_STARTS[ i ].y;
     g.dir = 'up';
+    g.released = GHOST_STARTS[ i ].releaseDelay === 0;
+    g.waitFrames = Math.round( GHOST_STARTS[ i ].releaseDelay * 60 );
   } );
 }
 
