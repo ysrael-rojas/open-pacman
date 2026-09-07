@@ -125,6 +125,13 @@ function insidePen( x, y ) {
   return x >= PEN.x0 && x <= PEN.x1 && y >= PEN.y0 && y <= PEN.y1;
 }
 
+// La puerta bloquea a quien no esta liberado o ya esta fuera de la pen: un
+// no-liberado patrulla dentro sin salir; un liberado de fuera no reentra.
+// Solo el liberado que sigue dentro la cruza, hacia fuera.
+function blocksDoor( g ) {
+  return !g.released || !insidePen( g.x, g.y );
+}
+
 // Devuelve la direccion de `choices` que minimiza la distancia Manhattan
 // desde la celda actual del fantasma hasta el punto objetivo (tx, ty).
 function pickToward( choices, g, tx, ty ) {
@@ -152,7 +159,7 @@ function decideGhost( game, g ) {
   const options = Object.keys( DIRS ).filter(
     ( dir ) =>
       dir !== OPPOSITE[ g.dir ] &&
-      canMove( grid, g.x, g.y, dir, 'ghost', !g.released )
+      canMove( grid, g.x, g.y, dir, 'ghost', blocksDoor( g ) )
   );
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ OPPOSITE[ g.dir ] ];
@@ -160,40 +167,45 @@ function decideGhost( game, g ) {
   // target != null -> persigue ese punto; target == null -> vaga al azar.
   let target = null;
 
-  if ( g.released && insidePen( g.x, g.y ) ) {
-    // Salida de la pen: mientras esta liberado pero aun dentro, apunta a la
-    // puerta mas cercana (fila 12) en vez de a su objetivo de estrategia.
-    target = { x: g.x <= DOOR_COLS[ 0 ] ? DOOR_COLS[ 0 ] : DOOR_COLS[ 1 ], y: DOOR_ROW };
-  } else if ( g.kind === 'chaser' ) {
-    // Agresivo: siempre hacia la celda de Pac-Man.
-    target = { x: px, y: py };
-  } else if ( g.kind === 'ambusher' ) {
-    // Apunta 2 celdas por delante de Pac-Man segun su direccion; si esa
-    // celda no es transitable, cae a la celda de Pac-Man.
-    const d = DIRS[ p.dir ];
-    const tx = px + d.x * 2;
-    const ty = py + d.y * 2;
-    target = { x: tx, y: ty };
-    if ( isWall( grid, tx, ty, 'ghost' ) ) target = { x: px, y: py };
-  } else if ( g.kind === 'flanker' ) {
-    // Refleja el punto 2 celdas por delante de Pac-Man respecto a la celda
-    // actual del chaser: target = 2 * porDelante - chaser.
-    const d = DIRS[ p.dir ];
-    const ax = px + d.x * 2;
-    const ay = py + d.y * 2;
-    const chaser = game.ghosts.find( ( o ) => o.kind === 'chaser' );
-    if ( chaser ) {
-      target = {
-        x: 2 * ax - Math.round( chaser.x ),
-        y: 2 * ay - Math.round( chaser.y ),
-      };
-    } else {
+  // La estrategia del kind solo aplica una vez liberado y fuera de la pen.
+  // Mientras no esta liberado, target queda null: deambula al azar entre los
+  // vecinos validos del interior de la pen (la puerta le bloquea, doorBlocks).
+  if ( g.released ) {
+    if ( insidePen( g.x, g.y ) ) {
+      // Salida de la pen: mientras esta liberado pero aun dentro, apunta a la
+      // puerta mas cercana (fila 12) en vez de a su objetivo de estrategia.
+      target = { x: g.x <= DOOR_COLS[ 0 ] ? DOOR_COLS[ 0 ] : DOOR_COLS[ 1 ], y: DOOR_ROW };
+    } else if ( g.kind === 'chaser' ) {
+      // Agresivo: siempre hacia la celda de Pac-Man.
       target = { x: px, y: py };
+    } else if ( g.kind === 'ambusher' ) {
+      // Apunta 2 celdas por delante de Pac-Man segun su direccion; si esa
+      // celda no es transitable, cae a la celda de Pac-Man.
+      const d = DIRS[ p.dir ];
+      const tx = px + d.x * 2;
+      const ty = py + d.y * 2;
+      target = { x: tx, y: ty };
+      if ( isWall( grid, tx, ty, 'ghost', blocksDoor( g ) ) ) target = { x: px, y: py };
+    } else if ( g.kind === 'flanker' ) {
+      // Refleja el punto 2 celdas por delante de Pac-Man respecto a la celda
+      // actual del chaser: target = 2 * porDelante - chaser.
+      const d = DIRS[ p.dir ];
+      const ax = px + d.x * 2;
+      const ay = py + d.y * 2;
+      const chaser = game.ghosts.find( ( o ) => o.kind === 'chaser' );
+      if ( chaser ) {
+        target = {
+          x: 2 * ax - Math.round( chaser.x ),
+          y: 2 * ay - Math.round( chaser.y ),
+        };
+      } else {
+        target = { x: px, y: py };
+      }
+    } else if ( g.kind === 'shy' ) {
+      // Persigue solo si Pac-Man esta lejos (> 8 celdas); si no, vaga.
+      const dist = Math.abs( g.x - px ) + Math.abs( g.y - py );
+      if ( dist > 8 ) target = { x: px, y: py };
     }
-  } else if ( g.kind === 'shy' ) {
-    // Persigue solo si Pac-Man esta lejos (> 8 celdas); si no, vaga.
-    const dist = Math.abs( g.x - px ) + Math.abs( g.y - py );
-    if ( dist > 8 ) target = { x: px, y: py };
   }
 
   if ( target ) g.dir = pickToward( choices, g, target.x, target.y );
@@ -214,7 +226,7 @@ function moveGhost( game, g ) {
     g.x = Math.round( g.x );
     g.y = Math.round( g.y );
     decideGhost( game, g );
-    if ( !canMove( grid, g.x, g.y, g.dir, 'ghost' ) ) return;
+    if ( !canMove( grid, g.x, g.y, g.dir, 'ghost', blocksDoor( g ) ) ) return;
   }
 
   const d = DIRS[ g.dir ];
