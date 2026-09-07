@@ -10,8 +10,9 @@ const DIRS = {
 };
 const OPPOSITE = { left: 'right', right: 'left', up: 'down', down: 'up' };
 
-const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
-const GHOST_SPEED = 0.1;    // 1/10 celda/frame
+const PACMAN_SPEED = 0.125;      // 1/8 celda/frame -> alinea cada 8 frames
+const GHOST_SPEED = 0.1;         // 1/10 celda/frame (ambusher, flanker, shy)
+const GHOST_SPEED_CHASER = 0.125; // 1/8 celda/frame: el chaser, igual que Pac-Man
 
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
@@ -40,8 +41,8 @@ function createGame() {
       x: g.x,
       y: g.y,
       dir: 'up',
-      speed: GHOST_SPEED,
       kind: g.kind,
+      speed: g.kind === 'chaser' ? GHOST_SPEED_CHASER : GHOST_SPEED,
     } ) ),
   };
 }
@@ -110,35 +111,73 @@ function movePacman( game ) {
   wrapTunnel( p, width );
 }
 
+// Devuelve la direccion de `choices` que minimiza la distancia Manhattan
+// desde la celda actual del fantasma hasta el punto objetivo (tx, ty).
+function pickToward( choices, g, tx, ty ) {
+  let best = choices[ 0 ];
+  let bestDist = Infinity;
+  for ( const dir of choices ) {
+    const d = DIRS[ dir ];
+    const nx = g.x + d.x;
+    const ny = g.y + d.y;
+    const dist = Math.abs( nx - tx ) + Math.abs( ny - ty );
+    if ( dist < bestDist ) {
+      bestDist = dist;
+      best = dir;
+    }
+  }
+  return best;
+}
+
 function decideGhost( game, g ) {
   const grid = game.grid;
   const p = game.pacman;
+  const px = Math.round( p.x );
+  const py = Math.round( p.y );
 
   const options = Object.keys( DIRS ).filter(
     ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
   );
   // Sin salida (callejon): permitir el giro de 180.
-  const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
+  const choices = options.length ? options : [ OPPOSITE[ g.dir ] ];
 
-  if ( g.kind === 'hunter' ) {
-    const px = Math.round( p.x );
-    const py = Math.round( p.y );
-    let best = choices[ 0 ];
-    let bestDist = Infinity;
-    for ( const dir of choices ) {
-      const d = DIRS[ dir ];
-      const nx = g.x + d.x;
-      const ny = g.y + d.y;
-      const dist = Math.abs( nx - px ) + Math.abs( ny - py );
-      if ( dist < bestDist ) {
-        bestDist = dist;
-        best = dir;
-      }
+  // target != null -> persigue ese punto; target == null -> vaga al azar.
+  let target = null;
+
+  if ( g.kind === 'chaser' ) {
+    // Agresivo: siempre hacia la celda de Pac-Man.
+    target = { x: px, y: py };
+  } else if ( g.kind === 'ambusher' ) {
+    // Apunta 2 celdas por delante de Pac-Man segun su direccion; si esa
+    // celda no es transitable, cae a la celda de Pac-Man.
+    const d = DIRS[ p.dir ];
+    const tx = px + d.x * 2;
+    const ty = py + d.y * 2;
+    target = { x: tx, y: ty };
+    if ( isWall( grid, tx, ty, 'ghost' ) ) target = { x: px, y: py };
+  } else if ( g.kind === 'flanker' ) {
+    // Refleja el punto 2 celdas por delante de Pac-Man respecto a la celda
+    // actual del chaser: target = 2 * porDelante - chaser.
+    const d = DIRS[ p.dir ];
+    const ax = px + d.x * 2;
+    const ay = py + d.y * 2;
+    const chaser = game.ghosts.find( ( o ) => o.kind === 'chaser' );
+    if ( chaser ) {
+      target = {
+        x: 2 * ax - Math.round( chaser.x ),
+        y: 2 * ay - Math.round( chaser.y ),
+      };
+    } else {
+      target = { x: px, y: py };
     }
-    g.dir = best;
-  } else {
-    g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
+  } else if ( g.kind === 'shy' ) {
+    // Persigue solo si Pac-Man esta lejos (> 8 celdas); si no, vaga.
+    const dist = Math.abs( g.x - px ) + Math.abs( g.y - py );
+    if ( dist > 8 ) target = { x: px, y: py };
   }
+
+  if ( target ) g.dir = pickToward( choices, g, target.x, target.y );
+  else g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
 }
 
 function moveGhost( game, g ) {
