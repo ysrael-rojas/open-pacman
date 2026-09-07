@@ -66,14 +66,17 @@ function drawDoor( ctx, grid ) {
   ctx.stroke();
 }
 
-function drawDots( ctx, grid ) {
+function drawDots( ctx, grid, frame ) {
   ctx.fillStyle = DOT_COLOR;
   for ( let y = 0; y < grid.length; y++ ) {
     for ( let x = 0; x < grid[ 0 ].length; x++ ) {
-      if ( grid[ y ][ x ] !== 2 ) continue;
+      const v = grid[ y ][ x ];
+      if ( v !== 2 && v !== 4 ) continue;
       const { cx, cy } = cellCenter( x, y );
       ctx.beginPath();
-      ctx.arc( cx, cy, 2.5, 0, Math.PI * 2 );
+      // Bola de poder: circulo grande con pulsacion suave segun el frame.
+      const r = v === 4 ? 5 + Math.sin( frame * 0.2 ) * 1.2 : 2.5;
+      ctx.arc( cx, cy, r, 0, Math.PI * 2 );
       ctx.fill();
     }
   }
@@ -98,13 +101,43 @@ function drawPacman( ctx, p, frame ) {
   ctx.fill();
 }
 
-function drawGhost( ctx, g, color ) {
+function drawGhost( ctx, g, color, frame, frightTimer ) {
   const { cx, cy } = cellCenter( g.x, g.y );
+
+  // Modo ojos: sin cuerpo, solo los dos ojos blancos con las pupilas mirando
+  // a la direccion de viaje.
+  if ( g.mode === 'eyes' ) {
+    const dir = DIRS[ g.dir ] || { x: 0, y: 0 };
+    const ex = dir.x * 1.6;
+    const ey = dir.y * 1.6;
+    for ( const off of [ -3.5, 3.5 ] ) {
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc( cx + off, cy, 3, 0, Math.PI * 2 );
+      ctx.fill();
+      ctx.fillStyle = '#2121ff';
+      ctx.beginPath();
+      ctx.arc( cx + off + ex, cy + ey, 1.5, 0, Math.PI * 2 );
+      ctx.fill();
+    }
+    return;
+  }
+
   const r = TILE / 2 - 1;
   const top = cy - r;
   const bottom = cy + r;
   const left = cx - r;
   const right = cx + r;
+
+  // Parpadeo de aviso: en los ultimos ~2 s del asustado (FLICKER_TIME) el
+  // cuerpo alterna blanco/azul cada ~6 frames antes de volver a la normalidad.
+  if (
+    g.mode === 'frightened' &&
+    frightTimer <= FLICKER_TIME &&
+    Math.floor( frame / 6 ) % 2 === 0
+  ) {
+    color = '#fff';
+  }
 
   ctx.fillStyle = color;
   ctx.beginPath();
@@ -161,9 +194,12 @@ function draw( ctx, game, frame ) {
 
   drawWalls( ctx, grid );
   drawDoor( ctx, grid );
-  drawDots( ctx, grid );
+  drawDots( ctx, grid, frame );
   drawPacman( ctx, game.pacman, frame );
-  game.ghosts.forEach( ( g ) => drawGhost( ctx, g, GHOST_COLOR[ g.kind ] || '#ff0000' ) );
+  game.ghosts.forEach( ( g ) => {
+    const color = g.mode === 'frightened' ? '#2121ff' : GHOST_COLOR[ g.kind ] || '#ff0000';
+    drawGhost( ctx, g, color, frame, game.frightTimer );
+  } );
   drawHUD( ctx, game, W );
 }
 
