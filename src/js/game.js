@@ -10,8 +10,9 @@ const DIRS = {
 };
 const OPPOSITE = { left: 'right', right: 'left', up: 'down', down: 'up' };
 
-const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
-const GHOST_SPEED = 0.1;    // 1/10 celda/frame
+const PACMAN_SPEED = 0.125;      // 1/8 celda/frame -> alinea cada 8 frames
+const GHOST_SPEED = 0.1;         // 1/10 celda/frame (ambusher, flanker, shy)
+const GHOST_SPEED_CHASER = 0.125; // 1/8 celda/frame: el chaser, igual que Pac-Man
 
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
@@ -40,8 +41,10 @@ function createGame() {
       x: g.x,
       y: g.y,
       dir: 'up',
-      speed: GHOST_SPEED,
       kind: g.kind,
+      speed: g.kind === 'chaser' ? GHOST_SPEED_CHASER : GHOST_SPEED,
+      released: g.releaseDelay === 0,
+      waitFrames: Math.round( g.releaseDelay * 60 ), // 60 frames = 1 s
     } ) ),
   };
 }
@@ -53,24 +56,26 @@ function aligned( v ) {
 // Una celda es muro para el actor dado?
 //   pacman: bloqueado por pared (1) y puerta (3)
 //   ghost:  bloqueado solo por pared (1)
-function isWall( grid, x, y, actor ) {
+//   ghost con doorBlocks (no liberado): la puerta (3) tambien bloquea, para
+//   que rebote dentro de la pen mientras espera su turno de salida.
+function isWall( grid, x, y, actor, doorBlocks ) {
   if ( y < 0 || y >= grid.length ) return true;
   if ( x < 0 || x >= grid[ 0 ].length ) return true;
   const v = grid[ y ][ x ];
   if ( v === 1 ) return true;
-  if ( v === 3 && actor === 'pacman' ) return true;
+  if ( v === 3 && ( actor === 'pacman' || doorBlocks ) ) return true;
   return false;
 }
 
 // Puede el actor avanzar desde (x,y) en la direccion dir?
-function canMove( grid, x, y, dir, actor ) {
+function canMove( grid, x, y, dir, actor, doorBlocks ) {
   const d = DIRS[ dir ];
   if ( !d ) return false;
   const tx = x + d.x;
   const ty = y + d.y;
   // Tunel: salir por un borde en la fila del tunel siempre es valido.
   if ( ty === TUNNEL_ROW && ( tx < 0 || tx >= grid[ 0 ].length ) ) return true;
-  return !isWall( grid, tx, ty, actor );
+  return !isWall( grid, tx, ty, actor, doorBlocks );
 }
 
 function wrapTunnel( a, width ) {
@@ -110,40 +115,100 @@ function movePacman( game ) {
   wrapTunnel( p, width );
 }
 
+// Pen (casa de los fantasmas): celdas interiores donde esperan su salida.
+// La puerta (tile 3) esta en la fila 12, cols 13-14.
+const PEN = { x0: 11, x1: 16, y0: 13, y1: 15 };
+const DOOR_ROW = 12;
+const DOOR_COLS = [ 13, 14 ];
+
+function insidePen( x, y ) {
+  return x >= PEN.x0 && x <= PEN.x1 && y >= PEN.y0 && y <= PEN.y1;
+}
+
+// Devuelve la direccion de `choices` que minimiza la distancia Manhattan
+// desde la celda actual del fantasma hasta el punto objetivo (tx, ty).
+function pickToward( choices, g, tx, ty ) {
+  let best = choices[ 0 ];
+  let bestDist = Infinity;
+  for ( const dir of choices ) {
+    const d = DIRS[ dir ];
+    const nx = g.x + d.x;
+    const ny = g.y + d.y;
+    const dist = Math.abs( nx - tx ) + Math.abs( ny - ty );
+    if ( dist < bestDist ) {
+      bestDist = dist;
+      best = dir;
+    }
+  }
+  return best;
+}
+
 function decideGhost( game, g ) {
   const grid = game.grid;
   const p = game.pacman;
+  const px = Math.round( p.x );
+  const py = Math.round( p.y );
 
   const options = Object.keys( DIRS ).filter(
-    ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
+    ( dir ) =>
+      dir !== OPPOSITE[ g.dir ] &&
+      canMove( grid, g.x, g.y, dir, 'ghost', !g.released )
   );
   // Sin salida (callejon): permitir el giro de 180.
-  const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
+  const choices = options.length ? options : [ OPPOSITE[ g.dir ] ];
 
-  if ( g.kind === 'hunter' ) {
-    const px = Math.round( p.x );
-    const py = Math.round( p.y );
-    let best = choices[ 0 ];
-    let bestDist = Infinity;
-    for ( const dir of choices ) {
-      const d = DIRS[ dir ];
-      const nx = g.x + d.x;
-      const ny = g.y + d.y;
-      const dist = Math.abs( nx - px ) + Math.abs( ny - py );
-      if ( dist < bestDist ) {
-        bestDist = dist;
-        best = dir;
-      }
+  // target != null -> persigue ese punto; target == null -> vaga al azar.
+  let target = null;
+
+  if ( g.released && insidePen( g.x, g.y ) ) {
+    // Salida de la pen: mientras esta liberado pero aun dentro, apunta a la
+    // puerta mas cercana (fila 12) en vez de a su objetivo de estrategia.
+    target = { x: g.x <= DOOR_COLS[ 0 ] ? DOOR_COLS[ 0 ] : DOOR_COLS[ 1 ], y: DOOR_ROW };
+  } else if ( g.kind === 'chaser' ) {
+    // Agresivo: siempre hacia la celda de Pac-Man.
+    target = { x: px, y: py };
+  } else if ( g.kind === 'ambusher' ) {
+    // Apunta 2 celdas por delante de Pac-Man segun su direccion; si esa
+    // celda no es transitable, cae a la celda de Pac-Man.
+    const d = DIRS[ p.dir ];
+    const tx = px + d.x * 2;
+    const ty = py + d.y * 2;
+    target = { x: tx, y: ty };
+    if ( isWall( grid, tx, ty, 'ghost' ) ) target = { x: px, y: py };
+  } else if ( g.kind === 'flanker' ) {
+    // Refleja el punto 2 celdas por delante de Pac-Man respecto a la celda
+    // actual del chaser: target = 2 * porDelante - chaser.
+    const d = DIRS[ p.dir ];
+    const ax = px + d.x * 2;
+    const ay = py + d.y * 2;
+    const chaser = game.ghosts.find( ( o ) => o.kind === 'chaser' );
+    if ( chaser ) {
+      target = {
+        x: 2 * ax - Math.round( chaser.x ),
+        y: 2 * ay - Math.round( chaser.y ),
+      };
+    } else {
+      target = { x: px, y: py };
     }
-    g.dir = best;
-  } else {
-    g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
+  } else if ( g.kind === 'shy' ) {
+    // Persigue solo si Pac-Man esta lejos (> 8 celdas); si no, vaga.
+    const dist = Math.abs( g.x - px ) + Math.abs( g.y - py );
+    if ( dist > 8 ) target = { x: px, y: py };
   }
+
+  if ( target ) g.dir = pickToward( choices, g, target.x, target.y );
+  else g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
 }
 
 function moveGhost( game, g ) {
   const grid = game.grid;
   const width = grid[ 0 ].length;
+
+  // Cuenta atras de la salida escalonada: 1 frame = 1/60 s.
+  if ( !g.released ) {
+    g.waitFrames--;
+    if ( g.waitFrames <= 0 ) g.released = true;
+  }
 
   if ( aligned( g.x ) && aligned( g.y ) ) {
     g.x = Math.round( g.x );
@@ -168,6 +233,8 @@ function resetPositions( game ) {
     g.x = GHOST_STARTS[ i ].x;
     g.y = GHOST_STARTS[ i ].y;
     g.dir = 'up';
+    g.released = GHOST_STARTS[ i ].releaseDelay === 0;
+    g.waitFrames = Math.round( GHOST_STARTS[ i ].releaseDelay * 60 );
   } );
 }
 
