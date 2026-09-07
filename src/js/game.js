@@ -125,6 +125,13 @@ function insidePen( x, y ) {
   return x >= PEN.x0 && x <= PEN.x1 && y >= PEN.y0 && y <= PEN.y1;
 }
 
+// La puerta bloquea a quien no esta liberado o ya esta fuera de la pen: un
+// no-liberado patrulla dentro sin salir; un liberado de fuera no reentra.
+// Solo el liberado que sigue dentro la cruza, hacia fuera.
+function blocksDoor( g ) {
+  return !g.released || !insidePen( g.x, g.y );
+}
+
 // Devuelve la direccion de `choices` que minimiza la distancia Manhattan
 // desde la celda actual del fantasma hasta el punto objetivo (tx, ty).
 function pickToward( choices, g, tx, ty ) {
@@ -152,7 +159,7 @@ function decideGhost( game, g ) {
   const options = Object.keys( DIRS ).filter(
     ( dir ) =>
       dir !== OPPOSITE[ g.dir ] &&
-      canMove( grid, g.x, g.y, dir, 'ghost', !g.released )
+      canMove( grid, g.x, g.y, dir, 'ghost', blocksDoor( g ) )
   );
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ OPPOSITE[ g.dir ] ];
@@ -178,7 +185,7 @@ function decideGhost( game, g ) {
       const tx = px + d.x * 2;
       const ty = py + d.y * 2;
       target = { x: tx, y: ty };
-      if ( isWall( grid, tx, ty, 'ghost' ) ) target = { x: px, y: py };
+      if ( isWall( grid, tx, ty, 'ghost', blocksDoor( g ) ) ) target = { x: px, y: py };
     } else if ( g.kind === 'flanker' ) {
       // Refleja el punto 2 celdas por delante de Pac-Man respecto a la celda
       // actual del chaser: target = 2 * porDelante - chaser.
@@ -219,7 +226,7 @@ function moveGhost( game, g ) {
     g.x = Math.round( g.x );
     g.y = Math.round( g.y );
     decideGhost( game, g );
-    if ( !canMove( grid, g.x, g.y, g.dir, 'ghost' ) ) return;
+    if ( !canMove( grid, g.x, g.y, g.dir, 'ghost', blocksDoor( g ) ) ) return;
   }
 
   const d = DIRS[ g.dir ];

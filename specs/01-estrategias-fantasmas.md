@@ -1,6 +1,6 @@
 # SPEC 01 — Cuatro fantasmas con estrategias propias
 
-> **Estado:** Aprovado
+> **Estado:** Implementado
 > **Depende de:** ninguna
 > **Fecha:** 2026-09-07
 > **Objetivo:** Tener 4 fantasmas en la partida, cada uno con una estrategia de

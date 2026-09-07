@@ -1,6 +1,6 @@
 # SPEC 02 — Salida fiable de los fantasmas de la pen
 
-> **Estado:** Aprobado
+> **Estado:** Implementado
 > **Depende de:** SPEC 01
 > **Fecha:** 2026-09-07
 > **Objetivo:** Arreglar la salida de los fantasmas de la pen para que cada uno
